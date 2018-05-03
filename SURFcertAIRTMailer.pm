@@ -238,7 +238,7 @@ sub alert_action {
 	my $mail = Email::MIME->create(
 		header => [
 			From => $NfConf::MAIL_FROM,
-			To => "gijs.rijnders\@surfnet.nl",
+			To => "cert\@surfnet.nl",
 			Subject => "Alert Triggered: $alert Top-IP: $first_ip",
 		],
 		body => $mail_body_string
