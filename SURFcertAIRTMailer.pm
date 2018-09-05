@@ -41,6 +41,7 @@ package SURFcertAIRTMailer;
 use strict;
 use NfProfile;
 use NfConf;
+use Socket;
 use Email::Send;
 use Email::MIME::Creator;
 
@@ -196,6 +197,32 @@ sub alert_action {
 		my @nffields = split(',', $output[1]);
 		$first_ip = $nffields[4];
 	}
+
+	# Attempt to resolve the IP-address.
+	my $resolvedname = "";
+	if (index($first_ip, ":") != -1)
+	{
+		# Resolve IPv6 address.
+		$resolvedname = gethostbyaddr(inet_aton($first_ip), AF_INET6());
+	}
+	else
+	{
+		# Resolve IPv4 address.
+		$resolvedname = gethostbyaddr(inet_aton($first_ip), AF_INET());
+	}
+
+	# -------------------------------------------------------------------------------------
+	# Perform some debugging, writing to a separate file that is not rotated.
+	my $filename = '/var/log/gijs_debug_mailplugin.log';
+	open(my $fh, '>>', $filename) or syslog('notice', "Failed to open $filename!");
+	say $fh "-----Timeslot: $timeslot-----";
+	foreach (@output)
+	{
+		say $fh $_;
+	}
+	say $fh "-----End-----";
+	close $fh;
+	# -------------------------------------------------------------------------------------
 	
 	# Perform another query for the top IP address to see which source ports the traffic comes from.
         my @output_detailed;
@@ -208,17 +235,17 @@ sub alert_action {
         }
 
 	# Create the mail body, which consists of a machine parsable part and a part to send to the customer.
-	$mail_body_string .= ",$first_ip\r\n\r\n";
+	$mail_body_string .= ",$first_ip,$resolvedname\r\n\r\n";
 
 	# Pick only the relevant information from the nfdump output.
 	# Output format: ts,te,td,pr,val,fl,flP,ipkt,ipktP,ibyt,ibytP,ipps,ibps,ibpp
-	$mail_body_string .= "Source Port\tFlows\t\tPackets\t\tVolume\r\n";
+	$mail_body_string .= "Source Port\tFlows\t\tPackets\t\tVolume\t\tBps\r\n";
 	foreach (@output_detailed)
 	{
 		# Split the line into fields.
 		my @detailed_fields = split(',', $_);
 		
-		# Check if this row is of significance. Take into account that the significance level is HARD-CODED below!
+		# Check if this row is of significance. Take into account that the significance level (20%) is HARD-CODED below!
 		my $bytespercent = $detailed_fields[10];
 		my $packetspercent = $detailed_fields[8];
 		if (($bytespercent >= 20) || ($packetspercent >= 20))
@@ -229,8 +256,9 @@ sub alert_action {
 			my $flowspercent = $detailed_fields[6];
 			my $packets = scale_packets_output $detailed_fields[7];
 			my $bytes = scale_bytes_output $detailed_fields[9];
+			my $bps = scale_bytes_output $detailed_fields[12];
 
-			$mail_body_string .= "$srcport\t\t$flows ($flowspercent %)\t$packets ($packetspercent %)\t$bytes ($bytespercent %)\r\n";
+			$mail_body_string .= "$srcport\t\t$flows ($flowspercent %)\t$packets ($packetspercent %)\t$bytes ($bytespercent %)\t$bps\r\n";
 		}
 	}	
 
@@ -238,7 +266,7 @@ sub alert_action {
 	my $mail = Email::MIME->create(
 		header => [
 			From => $NfConf::MAIL_FROM,
-			To => "cert\@surfnet.nl",
+			To => "gijs.rijnders\@surfnet.nl",
 			Subject => "Alert Triggered: $alert Top-IP: $first_ip",
 		],
 		body => $mail_body_string
