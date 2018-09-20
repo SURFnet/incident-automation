@@ -211,20 +211,10 @@ sub alert_action {
 		$resolvedname = gethostbyaddr(inet_aton($first_ip), AF_INET());
 	}
 
-	# -------------------------------------------------------------------------------------
-	# Perform some debugging, writing to a separate file that is not rotated.
-	my $filename = '/var/log/gijs_debug_mailplugin.log';
-	open(my $fh, '>>', $filename) or syslog('notice', "Failed to open $filename!");
-	say $fh "-----Timeslot: $timeslot-----";
-	foreach (@output)
-	{
-		say $fh $_;
-	}
-	say $fh "-----End-----";
-	close $fh;
-	# -------------------------------------------------------------------------------------
+	# Create the mail body, which consists of a machine parsable part and a part to send to the customer.
+	$mail_body_string .= ",$first_ip,$resolvedname\r\n\r\n";
 	
-	# Perform another query for the top IP address to see which source ports the traffic comes from.
+	# Perform another query for the top IP address to see which ports the traffic comes from or targets.
         my @output_detailed;
         my $file1 = "nfcapd.$timeslot";
 	my $profilestr = "$NfConf::PROFILEDATADIR/live/JNR01-Asd001A:JNR01-Asd002A";
@@ -234,12 +224,10 @@ sub alert_action {
                 close NFDUMP;    # SIGCHLD sets $child_exit
         }
 
-	# Create the mail body, which consists of a machine parsable part and a part to send to the customer.
-	$mail_body_string .= ",$first_ip,$resolvedname\r\n\r\n";
-
 	# Pick only the relevant information from the nfdump output.
 	# Output format: ts,te,td,pr,val,fl,flP,ipkt,ipktP,ibyt,ibytP,ipps,ibps,ibpp
-	$mail_body_string .= "Source Port\tFlows\t\tPackets\t\tVolume\t\tBps\r\n";
+	my $nf_overview .= "Source Port\tFlows\t\tPackets\t\tVolume\t\tBps\r\n";
+	my $nf_empty = 1;
 	foreach (@output_detailed)
 	{
 		# Split the line into fields.
@@ -258,9 +246,24 @@ sub alert_action {
 			my $bytes = scale_bytes_output $detailed_fields[9];
 			my $bps = scale_bytes_output $detailed_fields[12];
 
-			$mail_body_string .= "$srcport\t\t$flows ($flowspercent %)\t$packets ($packetspercent %)\t$bytes ($bytespercent %)\t$bps\r\n";
+			$nf_overview .= "$srcport\t\t$flows ($flowspercent %)\t$packets ($packetspercent %)\t$bytes ($bytespercent %)\t$bps\r\n";
+
+			# State that the overview is not empty.
+			$nf_empty = 0;
 		}
 	}	
+
+	# If the overview is not empty, we append it to the mail body, otherwise we append an informational string.
+	if ($nf_empty)
+	{
+		# Append an informational string saying that we didn't get any results.
+		$mail_body_string .= "No source port statistics were found to cover more than 20% of the total traffic.\r\n";
+	}
+	else
+	{
+		# Append the overview.
+		$mail_body_string .= $nf_overview;
+	}
 
 	# Create the mail message.
 	my $mail = Email::MIME->create(
