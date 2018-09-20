@@ -1,0 +1,89 @@
+<?php
+/* vim: syntax=php tabstop=3 shiftwidth=3
+ *
+ * Import filter for AIRT, parsing NfSen Alert mails.
+ * Copyright (C) 2018 Gijs Rijnders, SURFnet, The Netherlands
+
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+
+function filter_nfsenmailer_getVersion()
+{
+   return "1.0";
+}
+
+/* Filter function */
+function filter_nfsenmailer($input, &$output, $verbosity=FALSE)
+{
+   // Take out date and time from the mail headers.
+   $matches = array();
+   $data = array('srcip'=>'', 'logging'=>'', 'datetime'=>'', 'summary'=>'', 'type'=>'');
+   if (preg_match('/^Date: (.*)$/m', $input, $matches)) {
+      $data['datetime'] = $matches[1];
+   }
+
+   // Parse input.
+   $text = explode("\n", $input);
+   $body_found = false;
+   foreach ($text as $line)
+   {
+      if (substr($line, 0, 5) == "Alert")
+      {
+         $csvfields = explode(",", $line);
+         $data['srcip'] = $csvfields[1];
+         $data['summary'] = $csvfields[0];
+         $parts = explode("'", $line);
+         $data['type'] = "NfSen alert: " . $parts[1];
+      }
+      else if (substr($line, 0, 6) == "Source")
+      {
+         $body_found = true;
+      }
+
+      // Append the body text to the logging variable.
+      if ($body_found)
+      {
+         $data['logging'] .= $line . "\n";
+      }
+   }
+
+   // Build up output for AIRT incident.
+   $output = '<airt>'."\n";
+   $output .= "  <queuedata filter=\"filter_nfsenmailer\" version=\"".
+	   filter_nfsenmailer_getVersion()."\" ref=\"#1\">\n";
+   $output .= "     <status>open</status>\n";
+   $output .= "     <sender>NfSen Alert Mailer</sender>\n";
+   $output .= "     <type>$data[type]</type>\n";
+   $output .= "     <summary>$data[summary]</summary>\n";
+   $output .= "  </queuedata>\n";
+   $output .= "  <incident id=\"1\">\n";
+   $output .="    <ticketInformation>\n";
+   $output .="      <prefix>NfSen Mailer</prefix>\n";
+   $output .="    </ticketInformation>\n";
+   $output .="    <technicalInformation>\n";
+   $output .="      <ip>$data[srcip]</ip>\n";
+   $output .="      <incident_time>$data[datetime]</incident_time>\n";
+   $output .="      <logging>".htmlentities($data[logging])."</logging>\n";
+   $output .="   </technicalInformation>\n";
+   $output .="  </incident>\n";
+   $output .= "</airt>\n";
+
+   if ($verbosity == true)
+   {
+      print "$output";
+   }
+
+   return 0;
+}
