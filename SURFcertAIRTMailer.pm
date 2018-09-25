@@ -218,7 +218,7 @@ sub alert_action {
         my @output_detailed;
         my $file1 = "nfcapd.$timeslot";
 	my $profilestr = "$NfConf::PROFILEDATADIR/live/JNR01-Asd001A:JNR01-Asd002A";
-        if ( open NFDUMP, "$NfConf::PREFIX/nfdump -M $profilestr -T -r $file1 -q -o csv -n 5 -s srcport/bytes 'host $first_ip' 2>&1|" ) {
+        if ( open NFDUMP, "$NfConf::PREFIX/nfdump -M $profilestr -T -r $file1 -q -o csv -n 5 -s port/bytes 'host $first_ip' 2>&1|" ) {
                 local $SIG{PIPE} = sub { syslog('err', "Pipe broke for nfprofile"); };
                 @output_detailed = <NFDUMP>;
                 close NFDUMP;    # SIGCHLD sets $child_exit
@@ -226,8 +226,7 @@ sub alert_action {
 
 	# Pick only the relevant information from the nfdump output.
 	# Output format: ts,te,td,pr,val,fl,flP,ipkt,ipktP,ibyt,ibytP,ipps,ibps,ibpp
-	my $nf_overview .= "Source Port\tFlows\t\tPackets\t\tVolume\t\tBps\r\n";
-	my $nf_empty = 1;
+	my $nf_overview .= "First Seen\t\tPort\t\tFlows\t\tPackets\t\tVolume\t\tBps\r\n";
 	foreach (@output_detailed)
 	{
 		# Split the line into fields.
@@ -239,6 +238,7 @@ sub alert_action {
 		if (($bytespercent >= 20) || ($packetspercent >= 20))
 		{
 			# Get useful information from this line.
+			my $first_seen = $detailed_fields[0];
 			my $srcport = $detailed_fields[4];
 			my $flows = $detailed_fields[5];
 			my $flowspercent = $detailed_fields[6];
@@ -246,23 +246,26 @@ sub alert_action {
 			my $bytes = scale_bytes_output $detailed_fields[9];
 			my $bps = scale_bytes_output $detailed_fields[12];
 
-			$nf_overview .= "$srcport\t\t$flows ($flowspercent %)\t$packets ($packetspercent %)\t$bytes ($bytespercent %)\t$bps\r\n";
-
-			# State that the overview is not empty.
-			$nf_empty = 0;
+			$nf_overview .= "$first_seen\t$srcport\t\t$flows ($flowspercent %)\t$packets ($packetspercent %)\t$bytes ($bytespercent %)\t$bps\r\n";
 		}
 	}	
 
-	# If the overview is not empty, we append it to the mail body, otherwise we append an informational string.
-	if ($nf_empty)
+	# Append the overview to the email body.
+	$mail_body_string .= $nf_overview;
+	$mail_body_string .= "\r\nAn overview of the first 10 flows associated to the top IP-address is given below:\r\n\r\n";
+
+	# Additionally perform another query to get the first 10 flows for the IP-address we found.
+        my @flow_overview;
+        if ( open NFDUMP, "$NfConf::PREFIX/nfdump -M $profilestr -T -r $file1 -c 10 'host $first_ip' 2>&1|" ) {
+                local $SIG{PIPE} = sub { syslog('err', "Pipe broke for nfprofile"); };
+                @flow_overview = <NFDUMP>;
+                close NFDUMP;    # SIGCHLD sets $child_exit
+        }
+
+	# Append flow overview to the mail body.
+	foreach(@flow_overview)
 	{
-		# Append an informational string saying that we didn't get any results.
-		$mail_body_string .= "No source port statistics were found to cover more than 20% of the total traffic.\r\n";
-	}
-	else
-	{
-		# Append the overview.
-		$mail_body_string .= $nf_overview;
+		$mail_body_string .= $_;
 	}
 
 	# Create the mail message.
